@@ -1,0 +1,229 @@
+//------------------------------------------------
+//--- 010 Editor v13.0.1 Binary Template
+//
+//      File: 3DSX.bt
+//   Authors: Mas0n
+//   Version: 1.0.0
+//   Purpose: Parse 3DSX format designed for homebrew applications on the 3DS.
+//  Category: Executable
+// File Mask: *.3dsx
+//  ID Bytes: 33 44 53 58
+//   History: 1.0.0 
+//------------------------------------------------
+
+LittleEndian();
+
+local quad g_cbDirMeta = 0;
+local quad g_cbFileMeta = 0;
+
+//------------------------------------------------
+const DWORD _3DSX_HEADER_MAGIC = 0x58534433; // '3DSX'
+const DWORD  SMDH_HEADER_MAGIC = 0x48444D53; // 'SMDH'
+
+// Header
+typedef struct {
+    DWORD Magic<format=hex>;
+    Assert(this.Magic == _3DSX_HEADER_MAGIC, "Incorrect file format");
+    WORD whdrSize<format=hex>; // Header Size
+    WORD whdrReloSize<format=hex>; // Relocation Header size
+    DWORD dwFmtVersion<format=hex>; // Format version
+    DWORD dwFlags<format=hex>; // Flags
+    DWORD dwCodeSegSize<format=hex>; // Code segment size
+    DWORD dwRodataSegSize<format=hex>; // Rodata segment size
+    DWORD dwDataSegSize<format=hex>; // Data segment size (including bss)
+    DWORD dwBssSegSize<format=hex>; // Bss segment size
+} Header;
+
+ // Extended Header
+typedef struct {
+    DWORD dwSMDHOffset<format=hex>; // SMDH offset
+    DWORD dwSMDHOSize<format=hex>; // SMDH size
+    DWORD dwRomFSOffset<format=hex>; // RomFS offset
+} ExtendedHeader;
+
+ // Relocation Header
+typedef struct {
+    DWORD cbAbsRelo<format=hex>;// Number of absolute relocations
+    DWORD cbRelaRelo<format=hex>;// Number of relative relocations
+} ReloHeader;
+
+// Relocation
+typedef struct {
+    WORD cbSkip;
+    WORD cbPatch;
+} Relo;
+
+// Code relocation table
+typedef struct {
+    Relo absRelo[codeReloHdr.cbAbsRelo];
+    Relo relaRelo[codeReloHdr.cbRelaRelo];
+} CodeReloTbl<comment="Code relocation table">;// Code relocation table
+
+// Rodata relocation table
+typedef struct {
+    Relo absRelo[rodataReloHdr.cbAbsRelo];
+    Relo relaRelo[rodataReloHdr.cbRelaRelo];
+} RodataReloTbl<comment="Code relocation table">;// Rodata relocation table
+
+// Data relocation table
+typedef struct {
+    Relo absRelo[dataReloHdr.cbAbsRelo];
+    Relo relaRelo[dataReloHdr.cbRelaRelo];
+} DataReloTbl<comment="Code relocation table">;// Data relocation table
+
+// https://3dbrew.org/wiki/SMDH
+typedef struct {
+    wchar_t wchShortDesc[0x40]; // Short Description
+    wchar_t wchLongDesc[0x80]; // Long Description
+    wchar_t wchPublisher[0x40]; // Publisher
+} SMDHAppTitle;
+
+typedef struct {
+    BYTE Ratings[0x10]<format=hex>; // Region Specific Game Ratings (For use with Parental Controls)
+    DWORD LockOut<format=hex>; // Region Lockout
+    BYTE MakerID[0xc]<format=hex>; // Match Maker IDs (Online Play)
+    DWORD Flags<format=hex>; // Flags
+    WORD wEulaVersion; // EULA Version
+    WORD Reserved<format=hex>; // Reserved
+    DWORD oadf<format=hex>; // 	'Optimal Animation Default Frame' (for BNR)
+    DWORD cec<format=hex>; // CEC (StreetPass) ID (So the Home Menu knows which application icon to show the 'Green' CEC notification for)
+} SMDHAppSettings;
+
+typedef struct {
+    BYTE Small[0x480]<format=hex, comment="Small - 24x24 (shown on top screen when pausing the app)">;
+    BYTE Large[0x1200]<format=hex, comment="Large - 48x48 icon (the general icon)">;
+} IconGraphics;
+
+typedef struct {
+    DWORD dwMagic<format=hex>; // Magic 'SMDH'
+    Assert(this.dwMagic == SMDH_HEADER_MAGIC, "Incorrect file format");
+    WORD wVersion<format=hex>; // Version
+    WORD Reserved<format=hex>; // Reserved
+    SMDHAppTitle titles[16]; // 16 application titles structs, each 0x200 bytes
+    SMDHAppSettings settings; // Application Settings
+    QWORD Reserved2<format=hex>; // Reserved
+    IconGraphics IconGraph;// Icon graphics 
+} SMDHHeader;
+
+// RomFS
+typedef struct {
+    DWORD dwLength<format=hex>; // Header Length
+    DWORD dwDirHashTblOffset<format=hex, comment="Directory Hash Table Offset">;
+    DWORD dwDirHashTblLength<format=hex, comment="Directory Hash Table Length">;
+    DWORD dwDirMetaTblOffset<format=hex, comment="Directory Metadata Table Offset">;
+    DWORD dwDirMetaTblLength<format=hex, comment="Directory Metadata Table Length">;
+    DWORD dwFileHashTblOffset<format=hex, comment="File Hash Table Offset">;
+    DWORD dwFileHashTblLength<format=hex, comment="File Hash Table Length">;
+    DWORD dwFileMetaTblOffset<format=hex, comment="File Metadata Table Offset">;
+    DWORD dwFileMetaTblLength<format=hex, comment="File Metadata Table Length">;
+    DWORD dwFileDataOffset<format=hex, comment="File Data Offset">;
+} Level3Header;
+
+// Directory Metadata Table
+typedef struct {
+    DWORD dwParentDirOffset<format=hex, comment="Offset of Parent Directory (self if Root)">;
+    DWORD dwNextSlibingOffset<format=hex, comment="Offset of next Sibling Directory">;
+    DWORD dwFirstChildDirOffset<format=hex, comment="Offset of first Child Directory (Subdirectory)">;
+    DWORD dwFirstFileOffset<format=hex, comment="Offset of first File (in File Metadata Table)">;
+    DWORD dwNextSameHashTblDirOffset<format=hex, comment="Offset of next Directory in the same Hash Table bucket">;
+    DWORD dwNameLength<format=hex, comment="Name Length">;
+    wchar_t wchName[((this.dwNameLength+0x3)&~0x3) / 2]<format=hex, comment="Directory Name (Unicode) * Name Length (rounded up to multiple of 4)">;
+} DirectoryMetaTable<comment="Directory Metadata Table">;
+
+// File Metadata Table
+typedef struct {
+    DWORD dwDirOffset<format=hex, comment="Offset of Containing Directory (within Directory Metadata Table)">;
+    DWORD dwNextSlibingOffset<format=hex, comment="Offset of next Sibling File">;
+    QWORD dwFileDataOffset<format=hex, comment="Offset of File's Data">;
+    QWORD dwFileDataLength<format=hex, comment="Length of File's Data">;
+    DWORD dwNextSameHashTblFileOffset<format=hex, comment="Offset of next File in the same Hash Table bucket">;
+    DWORD dwNameLength<format=hex, comment="Name Length">;
+    wchar_t FileName[((this.dwNameLength+0x3)&~0x3) / 2]<format=hex, comment="Directory Name (Unicode) * Name Length (rounded up to multiple of 4)">;
+} FileMetaTable<comment="Directory Metadata Table">;
+
+
+typedef struct (quad length) {
+    BYTE FileData[length];
+} File<comment=FileNameFunc>;
+
+string FileNameFunc(File& f) {
+    local quad i;
+    for (i = 0; i < g_cbFileMeta; i++) {
+        if (startof(level3Hdr) + level3Hdr.dwFileDataOffset + fileMetaTbl[i].dwFileDataOffset  == startof(f.FileData)) {
+            return WStringToString(fileMetaTbl[i].FileName);
+        }
+        // Printf("%s: 0x%x\n", fileMetaTbl[i].FileName, startof(level3Hdr) + level3Hdr.dwFileDataOffset + fileMetaTbl[i].dwFileDataOffset);
+    }
+    Warning("Error to find file name");
+}
+
+void ParseSMDH() {
+    SMDHHeader smdhHdr;
+    Assert(sizeof(smdhHdr) == extentedHdr.dwSMDHOSize, "Incorrect file format");
+}
+
+void ParseRomFs() {
+    local quad i;
+
+    Level3Header level3Hdr;
+    Assert(sizeof(Level3Header) == level3Hdr.dwLength, "Incorrect file format");
+    // Directory HashKey Table
+    Assert(FTell() == startof(level3Hdr) + level3Hdr.dwDirHashTblOffset, "Incorrect file format");
+    BYTE dirHashKeyTbl[level3Hdr.dwDirHashTblLength]<format=hex>;
+    Assert(FTell() == startof(level3Hdr) + level3Hdr.dwDirMetaTblOffset, "Incorrect file format");
+    
+    // Directory Metadata Table
+    while (FTell() < startof(level3Hdr) + level3Hdr.dwDirMetaTblOffset + level3Hdr.dwDirMetaTblLength) {
+        DirectoryMetaTable dirMetaTbl;
+        g_cbDirMeta++;
+    }
+    // File HashKey Table
+    Assert(FTell() == startof(level3Hdr) + level3Hdr.dwFileHashTblOffset, "Incorrect file format");
+    BYTE fileHashKeyTbl[level3Hdr.dwFileHashTblLength]<format=hex>;
+    Assert(FTell() == startof(level3Hdr) + level3Hdr.dwFileMetaTblOffset, "Incorrect file format");
+    // File Metadata Table
+    while (FTell() < startof(level3Hdr) + level3Hdr.dwFileMetaTblOffset + level3Hdr.dwFileMetaTblLength) {
+        FileMetaTable fileMetaTbl;
+        g_cbFileMeta++;
+    }
+
+    // FileData
+    Assert(FTell() == startof(level3Hdr) + level3Hdr.dwFileDataOffset, "Incorrect file format");
+    for (i = 0; i < g_cbFileMeta; i++) {
+        File file((fileMetaTbl[i].dwFileDataLength+0x3)&~0x3);
+    }
+
+    Assert(FEof(), "BUG");
+}
+
+//------------------------------------------------
+
+// Header
+Header hdr;
+
+// Extended Header, if the header size field is greater than 32.
+if (hdr.whdrSize > 0x20) ExtendedHeader extentedHdr;
+Assert (FTell() == hdr.whdrSize, "Incorrect file format");
+
+// Relocation Header
+ReloHeader codeReloHdr;
+ReloHeader rodataReloHdr;
+ReloHeader dataReloHdr;
+
+// Segment
+BYTE codeSeg[hdr.dwCodeSegSize]<format=hex>;
+BYTE rodataSeg[hdr.dwRodataSegSize]<format=hex>;
+BYTE dataSeg[hdr.dwDataSegSize-hdr.dwBssSegSize]<format=hex>; // inlcude bss
+//BYTE bssSeg[hdr.dwBssSegSize]<format=hex>;
+
+CodeReloTbl codeReloTbl;
+RodataReloTbl rodataReloTbl;
+DataReloTbl dataReloTbl;
+
+if (exists(extentedHdr)) {
+    FSeek(extentedHdr.dwSMDHOffset);
+    ParseSMDH();
+
+    FSeek(extentedHdr.dwRomFSOffset);
+    ParseRomFs();
+}
